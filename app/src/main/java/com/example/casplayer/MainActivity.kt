@@ -219,7 +219,8 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
                             withContext(Dispatchers.Main) { status = "Playing…" }
 
                             // IMPORTANT: no trailing lambda; pass onEnd inside parentheses
-                        playPcmToUsbAndSpeaker(
+                       playPcmToUsbAndSpeaker(... ) { /* onEnd */ }
+
                             ctx = ctx,
                             sampleRate = sampleRate,
                             pcm = pcm,
@@ -288,9 +289,6 @@ fun LabeledSliderMini(label: String, value: Float, min: Float, max: Float, onCha
 /* ---------- Dual-route audio with progress + monitor volume + route labels ---------- */
 
 object AudioTrackRouter {
-    private var primary: AudioTrack? = null
-    private var monitor: AudioTrack? = null
-
     fun play(
         context: Context,
         sampleRate: Int,
@@ -300,8 +298,8 @@ object AudioTrackRouter {
         onRoute: (String, String) -> Unit = { _, _ -> },
         onProgress: (Float) -> Unit = {},
         onEnd: () -> Unit
-    ) {
-        stop()
+    ) { /* ... */ }
+}
 
         val am = context.getSystemService(AudioManager::class.java)
         val outputs = am?.getDevices(AudioManager.GET_DEVICES_OUTPUTS).orEmpty()
@@ -426,6 +424,7 @@ fun playPcmToUsbAndSpeaker(
     onProgress: (Float) -> Unit = {},
     onEnd: () -> Unit
 ) = AudioTrackRouter.play(ctx, sampleRate, pcm, mirrorToSpeaker, monitorVolume, onRoute, onProgress, onEnd)
+
 
 /* ---------- Duration estimate & generator ---------- */
 
