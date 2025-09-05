@@ -31,7 +31,7 @@ jobs:
       - name: Write local.properties (point Gradle to SDK)
         run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
 
-      # ---- MANUAL GRADLE INSTALL (no cache) ----
+      # ---- Manual Gradle install (works even without wrapper) ----
       - name: Install Gradle 8.7
         run: |
           curl -L -o gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
@@ -45,20 +45,27 @@ jobs:
       - name: Make wrapper executable
         run: chmod +x ./gradlew
 
-      # Build the debug APK (verbose) + capture log
-- name: Build Debug APK (plain console, full errors)
-  run: |
-    set -o pipefail
-    ./gradlew \
-      --no-daemon \
-      --stacktrace \
-      --info \
-      --console=plain \
-      -Dkotlin.colors.enabled=false \
-      -Dkotlin.compiler.execution.strategy=in-process \
-      -Porg.gradle.warning.mode=all \
-      assembleDebug 2>&1 | tee buildlog.txt
+      # Optional guard (won't fail if mipmaps are missing; we use drawable icon fallback)
+      - name: Check icon presence (informational)
+        run: |
+          if [ -f app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml ]; then
+            echo "Adaptive mipmap present."
+          else
+            echo "Using drawable icon fallback."
+          fi
 
+      - name: Build Debug APK (plain console, full errors)
+        run: |
+          set -o pipefail
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            --info \
+            --console=plain \
+            -Dkotlin.colors.enabled=false \
+            -Dkotlin.compiler.execution.strategy=in-process \
+            -Porg.gradle.warning.mode=all \
+            assembleDebug 2>&1 | tee buildlog.txt
 
       - name: Upload build log
         if: always()
