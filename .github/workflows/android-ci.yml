@@ -46,10 +46,19 @@ jobs:
         run: chmod +x ./gradlew
 
       # Build the debug APK (verbose) + capture log
-      - name: Build Debug APK (verbose)
-        run: |
-          set -o pipefail
-          ./gradlew --no-daemon --stacktrace --info assembleDebug 2>&1 | tee buildlog.txt
+- name: Build Debug APK (plain console, full errors)
+  run: |
+    set -o pipefail
+    ./gradlew \
+      --no-daemon \
+      --stacktrace \
+      --info \
+      --console=plain \
+      -Dkotlin.colors.enabled=false \
+      -Dkotlin.compiler.execution.strategy=in-process \
+      -Porg.gradle.warning.mode=all \
+      assembleDebug 2>&1 | tee buildlog.txt
+
 
       - name: Upload build log
         if: always()
