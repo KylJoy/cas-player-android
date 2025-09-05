@@ -48,10 +48,18 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
     var tailMs by remember { mutableStateOf(300) }
     var amplitude by remember { mutableStateOf(0.9f) }
     var invert by remember { mutableStateOf(false) }
-    var monitorSpeaker by remember { mutableStateOf(false) }   // NEW: mirror to speaker
+
+    var monitorSpeaker by remember { mutableStateOf(false) }
+    var monitorVol by remember { mutableStateOf(0.35f) } // 0..1 speaker monitor volume
+
     var isPlaying by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf(0f) }
     var status by remember { mutableStateOf("Ready") }
+
+    // time-based progress
+    var totalMs by remember { mutableStateOf(0) }
+    var elapsedMs by remember { mutableStateOf(0) }
+    val progress: Float = if (totalMs > 0) elapsedMs.toFloat() / totalMs else 0f
+
     val scope = rememberCoroutineScope()
 
     val picker = rememberLauncherForActivityResult(
@@ -69,58 +77,106 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
         Modifier
             .fillMaxSize()
             .verticalScroll(scroll)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text("TRS-80 .CAS Player", style = MaterialTheme.typography.headlineSmall)
-        Text("File: $fileName", maxLines = 2, overflow = TextOverflow.Ellipsis)
-
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Pick .cas") }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("TRS-80 .CAS Player", style = MaterialTheme.typography.titleMedium)
+                Text(fileName, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
             Spacer(Modifier.width(8.dp))
-            ModeSelector(mode) { mode = it }
+            Button(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Pick .cas") }
         }
 
         Row(
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Bit order")
-            SegmentedButtons(
-                options = listOf("MSB→LSB", "LSB→MSB"),
-                selected = if (bitOrder == BitOrder.MSB_FIRST) 0 else 1
-            ) { bitOrder = if (it == 0) BitOrder.MSB_FIRST else BitOrder.LSB_FIRST }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Speed:", style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.width(6.dp))
+                SegmentedButtons(
+                    options = listOf("250 FM", "500 FM", "1500 FSK"),
+                    selected = when (mode) { EncodingMode.FM_250 -> 0; EncodingMode.FM_500 -> 1; EncodingMode.FSK_1500 -> 2 }
+                ) { sel -> mode = when (sel) { 0 -> EncodingMode.FM_250; 1 -> EncodingMode.FM_500; else -> EncodingMode.FSK_1500 } }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Bit:", style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.width(6.dp))
+                SegmentedButtons(
+                    options = listOf("MSB→LSB", "LSB→MSB"),
+                    selected = if (bitOrder == BitOrder.MSB_FIRST) 0 else 1
+                ) { bitOrder = if (it == 0) BitOrder.MSB_FIRST else BitOrder.LSB_FIRST }
+            }
         }
 
         Row(
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Sample rate: ${sampleRate} Hz")
-            SegmentedButtons(
-                options = listOf("44100", "48000", "96000"),
-                selected = when (sampleRate) { 44100 -> 0; 48000 -> 1; 96000 -> 2; else -> 0 }
-            ) { sampleRate = listOf(44100, 48000, 96000)[it] }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Rate:", style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.width(6.dp))
+                SegmentedButtons(
+                    options = listOf("44100", "48000", "96000"),
+                    selected = when (sampleRate) { 44100 -> 0; 48000 -> 1; 96000 -> 2; else -> 0 }
+                ) { sampleRate = listOf(44100, 48000, 96000)[it] }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Amp", style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.width(6.dp))
+                Slider(
+                    value = amplitude,
+                    onValueChange = { amplitude = it },
+                    valueRange = 0.1f..1.0f,
+                    modifier = Modifier.width(180.dp)
+                )
+            }
         }
 
-        LabeledSlider("Leader (ms)", leaderMs.toFloat(), 0f, 4000f) { leaderMs = it.roundToInt() }
-        LabeledSlider("Tail (ms)", tailMs.toFloat(), 0f, 4000f) { tailMs = it.roundToInt() }
-        LabeledSlider("Amplitude", amplitude, 0.1f, 1.0f) { amplitude = it }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            LabeledSliderMini("Leader", leaderMs.toFloat(), 0f, 4000f) { leaderMs = it.roundToInt() }
+            Spacer(Modifier.width(8.dp))
+            LabeledSliderMini("Tail", tailMs.toFloat(), 0f, 4000f) { tailMs = it.roundToInt() }
+        }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = invert, onCheckedChange = { invert = it })
-            Text("Invert polarity")
+            Text("Invert polarity", style = MaterialTheme.typography.bodySmall)
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // Monitor toggle + volume
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Checkbox(checked = monitorSpeaker, onCheckedChange = { monitorSpeaker = it })
-            Text("Monitor on speaker (mirror output)")
+            Text("Monitor on speaker", style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.width(8.dp))
+            Text("Vol", style = MaterialTheme.typography.bodySmall)
+            Slider(
+                value = monitorVol,
+                onValueChange = { monitorVol = it },
+                valueRange = 0f..1f,
+                enabled = monitorSpeaker,
+                modifier = Modifier.width(160.dp)
+            )
+            Text("${(monitorVol * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
         }
 
-        LinearProgressIndicator(progress, Modifier.fillMaxWidth())
-        Text(status, style = MaterialTheme.typography.bodySmall)
+        LinearProgressIndicator(progress.coerceIn(0f, 1f), Modifier.fillMaxWidth())
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("${formatMs(elapsedMs)} / ${formatMs(totalMs)}", style = MaterialTheme.typography.bodySmall)
+            Text("${(progress * 100).coerceIn(0f, 100f).toInt()}%", style = MaterialTheme.typography.bodySmall)
+        }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
@@ -128,22 +184,32 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
                 onClick = {
                     val uri = fileUri ?: return@Button
                     isPlaying = true
-                    status = "Generating..."
+                    status = "Generating…"
                     scope.launch(Dispatchers.Default) {
                         try {
                             val bytes = cr.openInputStream(uri)!!.use { it.readBytes() }
+                            totalMs = estimateTotalMs(bytes.size, mode, leaderMs, tailMs)
+                            elapsedMs = 0
+
                             val gen = CasSignalGenerator(sampleRate, amplitude, invert)
                             val pcm = gen.generate(
-                                bytes = bytes,
-                                mode = mode,
-                                leaderMs = leaderMs,
-                                tailMs = tailMs,
+                                bytes = bytes, mode = mode,
+                                leaderMs = leaderMs, tailMs = tailMs,
                                 bitOrder = bitOrder
-                            ) { p -> progress = p }
-                            withContext(Dispatchers.Main) { status = "Playing audio..." }
-                            playPcmToUsbAndSpeaker(ctx, sampleRate, pcm, monitorSpeaker) {
+                            ) { /* generation progress unused */ }
+
+                            withContext(Dispatchers.Main) { status = "Playing…" }
+
+                            playPcmToUsbAndSpeaker(
+                                ctx = ctx,
+                                sampleRate = sampleRate,
+                                pcm = pcm,
+                                mirrorToSpeaker = monitorSpeaker,
+                                monitorVolume = monitorVol,
+                                onProgress = { frac -> elapsedMs = (frac * totalMs).toInt() }
+                            ) {
                                 isPlaying = false
-                                progress = 0f
+                                elapsedMs = totalMs
                                 status = "Done"
                             }
                         } catch (t: Throwable) {
@@ -159,17 +225,17 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
             Button(onClick = {
                 AudioTrackRouter.stop()
                 isPlaying = false
-                progress = 0f
                 status = "Stopped"
             }) { Text("Stop") }
         }
 
-        Text(
-            "Tips: Disable EQ/Dolby, set phone volume ~75–85%. If loads fail, try the other bit order or speed.",
-            style = MaterialTheme.typography.bodySmall
-        )
+        Text(status, style = MaterialTheme.typography.bodySmall)
+        Text("Tips: Disable EQ/Dolby • Vol ~75–85% • Try other bit order/speed if load fails.",
+            style = MaterialTheme.typography.bodySmall)
     }
 }
+
+/* ---------- Compact UI helpers ---------- */
 
 @Composable
 fun SegmentedButtons(options: List<String>, selected: Int, onChange: (Int) -> Unit) {
@@ -181,39 +247,28 @@ fun SegmentedButtons(options: List<String>, selected: Int, onChange: (Int) -> Un
 }
 
 @Composable
-fun ModeSelector(selected: EncodingMode, onChange: (EncodingMode) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Speed:")
-        SegmentedButtons(
-            options = listOf("250 FM", "500 FM", "1500 FSK"),
-            selected = when (selected) { EncodingMode.FM_250 -> 0; EncodingMode.FM_500 -> 1; EncodingMode.FSK_1500 -> 2 }
-        ) { sel ->
-            onChange(
-                when (sel) {
-                    0 -> EncodingMode.FM_250
-                    1 -> EncodingMode.FM_500
-                    else -> EncodingMode.FSK_1500
-                }
-            )
-        }
-    }
-}
-
-@Composable
-fun LabeledSlider(label: String, value: Float, min: Float, max: Float, onChange: (Float) -> Unit) {
-    Column {
-        Text("$label: ${"%.0f".format(value)}")
+fun LabeledSliderMini(label: String, value: Float, min: Float, max: Float, onChange: (Float) -> Unit) {
+    Column(Modifier.weight(1f)) {
+        Text("$label ${"%.0f".format(value)} ms", style = MaterialTheme.typography.bodySmall)
         Slider(value = value, onValueChange = onChange, valueRange = min..max)
     }
 }
 
-/* ---------- Dual-route audio: USB + Speaker ---------- */
+/* ---------- Dual-route audio with progress + monitor volume ---------- */
 
 object AudioTrackRouter {
     private var primary: AudioTrack? = null
     private var monitor: AudioTrack? = null
 
-    fun play(context: Context, sampleRate: Int, pcm: ShortArray, mirrorToSpeaker: Boolean, onEnd: () -> Unit) {
+    fun play(
+        context: Context,
+        sampleRate: Int,
+        pcm: ShortArray,
+        mirrorToSpeaker: Boolean,
+        monitorVolume: Float,
+        onProgress: (Float) -> Unit = {},
+        onEnd: () -> Unit
+    ) {
         stop()
 
         val am = context.getSystemService(AudioManager::class.java)
@@ -250,31 +305,30 @@ object AudioTrackRouter {
         if (mirrorToSpeaker && spk != null) {
             val t2 = newTrack()
             try { t2.setPreferredDevice(spk) } catch (_: Throwable) {}
-            // keep monitor at a gentler level
-            try { t2.setVolume(0.35f) } catch (_: Throwable) {}
+            try { t2.setVolume(monitorVolume.coerceIn(0f, 1f)) } catch (_: Throwable) {}
             t2.play()
             monitor = t2
         }
 
-        // Write to both in the same loop
         Thread {
+            val total = pcm.size
             var idx = 0
             val chunk = 2048
             val t2 = monitor
-            val t1Local = t1
             try {
-                while (idx < pcm.size && t1Local.playState == AudioTrack.PLAYSTATE_PLAYING) {
-                    val end = min(idx + chunk, pcm.size)
+                while (idx < total && t1.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                    val end = min(idx + chunk, total)
                     val len = end - idx
-                    t1Local.write(pcm, idx, len, AudioTrack.WRITE_BLOCKING)
+                    t1.write(pcm, idx, len, AudioTrack.WRITE_BLOCKING)
                     if (t2 != null && t2.playState == AudioTrack.PLAYSTATE_PLAYING) {
                         t2.write(pcm, idx, len, AudioTrack.WRITE_BLOCKING)
                     }
                     idx = end
+                    onProgress(idx.toFloat() / total.toFloat())
                 }
             } finally {
-                try { t1Local.stop() } catch (_: Throwable) {}
-                try { t1Local.release() } catch (_: Throwable) {}
+                try { t1.stop() } catch (_: Throwable) {}
+                try { t1.release() } catch (_: Throwable) {}
                 primary = null
                 if (t2 != null) {
                     try { t2.stop() } catch (_: Throwable) {}
@@ -296,11 +350,28 @@ object AudioTrackRouter {
     }
 }
 
-// Helper wrapper
-fun playPcmToUsbAndSpeaker(ctx: Context, sampleRate: Int, pcm: ShortArray, mirrorToSpeaker: Boolean, onEnd: () -> Unit) =
-    AudioTrackRouter.play(ctx, sampleRate, pcm, mirrorToSpeaker, onEnd)
+fun playPcmToUsbAndSpeaker(
+    ctx: Context,
+    sampleRate: Int,
+    pcm: ShortArray,
+    mirrorToSpeaker: Boolean,
+    monitorVolume: Float,
+    onProgress: (Float) -> Unit = {},
+    onEnd: () -> Unit
+) = AudioTrackRouter.play(ctx, sampleRate, pcm, mirrorToSpeaker, monitorVolume, onProgress, onEnd)
 
-/* ---------- Signal generator (unchanged except for minor cleanup) ---------- */
+/* ---------- Duration estimate & generator ---------- */
+
+private fun estimateTotalMs(byteCount: Int, mode: EncodingMode, leaderMs: Int, tailMs: Int): Int {
+    val baud = when (mode) {
+        EncodingMode.FM_250 -> 250
+        EncodingMode.FM_500 -> 500
+        EncodingMode.FSK_1500 -> 1500
+    }
+    val bits = byteCount * 8.0
+    val bodyMs = (bits / baud) * 1000.0
+    return (leaderMs + bodyMs + tailMs).toInt()
+}
 
 class CasSignalGenerator(
     val sampleRate: Int,
@@ -420,4 +491,14 @@ class CasSignalGenerator(
         onProgress(1f)
         return if (idx == out.size) out else out.copyOf(idx)
     }
+}
+
+/* ---------- Tiny helpers ---------- */
+
+private fun formatMs(ms: Int): String {
+    if (ms <= 0) return "0:00"
+    val totalSec = ms / 1000
+    val m = totalSec / 60
+    val s = totalSec % 60
+    return "$m:${s.toString().padStart(2, '0')}"
 }
