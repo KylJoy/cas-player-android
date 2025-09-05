@@ -60,6 +60,10 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
     var elapsedMs by remember { mutableStateOf(0) }
     val progress: Float = if (totalMs > 0) elapsedMs.toFloat() / totalMs else 0f
 
+    // routed device labels
+    var primaryRoute by remember { mutableStateOf("—") } // main (USB) route
+    var monitorRoute by remember { mutableStateOf("—") } // speaker monitor route
+
     val scope = rememberCoroutineScope()
 
     val picker = rememberLauncherForActivityResult(
@@ -80,6 +84,7 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        // Header
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -93,6 +98,7 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
             Button(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Pick .cas") }
         }
 
+        // Speed + Bit order
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -116,6 +122,7 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
             }
         }
 
+        // Rate + amplitude
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -141,6 +148,7 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
             }
         }
 
+        // Leader/Tail
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -151,6 +159,7 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
             LabeledSliderMini("Tail", tailMs.toFloat(), 0f, 4000f) { tailMs = it.roundToInt() }
         }
 
+        // Polarity
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = invert, onCheckedChange = { invert = it })
             Text("Invert polarity", style = MaterialTheme.typography.bodySmall)
@@ -172,12 +181,20 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
             Text("${(monitorVol * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
         }
 
+        // Progress
         LinearProgressIndicator(progress.coerceIn(0f, 1f), Modifier.fillMaxWidth())
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("${formatMs(elapsedMs)} / ${formatMs(totalMs)}", style = MaterialTheme.typography.bodySmall)
             Text("${(progress * 100).coerceIn(0f, 100f).toInt()}%", style = MaterialTheme.typography.bodySmall)
         }
 
+        // Actual routed outputs
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Output: $primaryRoute", style = MaterialTheme.typography.bodySmall)
+            Text("Monitor: $monitorRoute", style = MaterialTheme.typography.bodySmall)
+        }
+
+        // Controls
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 enabled = !isPlaying && fileUri != null,
@@ -193,10 +210,12 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
 
                             val gen = CasSignalGenerator(sampleRate, amplitude, invert)
                             val pcm = gen.generate(
-                                bytes = bytes, mode = mode,
-                                leaderMs = leaderMs, tailMs = tailMs,
+                                bytes = bytes,
+                                mode = mode,
+                                leaderMs = leaderMs,
+                                tailMs = tailMs,
                                 bitOrder = bitOrder
-                            ) { /* generation progress unused */ }
+                            ) { /* generation progress unused in UI */ }
 
                             withContext(Dispatchers.Main) { status = "Playing…" }
 
@@ -206,6 +225,12 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
                                 pcm = pcm,
                                 mirrorToSpeaker = monitorSpeaker,
                                 monitorVolume = monitorVol,
+                                onRoute = { p, m ->
+                                    scope.launch(Dispatchers.Main) {
+                                        primaryRoute = p
+                                        monitorRoute = m
+                                    }
+                                },
                                 onProgress = { frac -> elapsedMs = (frac * totalMs).toInt() }
                             ) {
                                 isPlaying = false
@@ -230,8 +255,10 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
         }
 
         Text(status, style = MaterialTheme.typography.bodySmall)
-        Text("Tips: Disable EQ/Dolby • Vol ~75–85% • Try other bit order/speed if load fails.",
-            style = MaterialTheme.typography.bodySmall)
+        Text(
+            "Tips: Disable EQ/Dolby • Vol ~75–85% • Try other bit order/speed if load fails.",
+            style = MaterialTheme.typography.bodySmall
+        )
     }
 }
 
@@ -254,7 +281,7 @@ fun LabeledSliderMini(label: String, value: Float, min: Float, max: Float, onCha
     }
 }
 
-/* ---------- Dual-route audio with progress + monitor volume ---------- */
+/* ---------- Dual-route audio with progress + monitor volume + route labels ---------- */
 
 object AudioTrackRouter {
     private var primary: AudioTrack? = null
@@ -266,6 +293,7 @@ object AudioTrackRouter {
         pcm: ShortArray,
         mirrorToSpeaker: Boolean,
         monitorVolume: Float,
+        onRoute: (String, String) -> Unit = { _, _ -> },
         onProgress: (Float) -> Unit = {},
         onEnd: () -> Unit
     ) {
@@ -310,10 +338,14 @@ object AudioTrackRouter {
             monitor = t2
         }
 
+        // Report initial routes (actual, not just preferred)
+        onRoute(labelForDevice(t1.routedDevice), labelForDevice(monitor?.routedDevice))
+
         Thread {
             val total = pcm.size
             var idx = 0
             val chunk = 2048
+            var chunkCount = 0
             val t2 = monitor
             try {
                 while (idx < total && t1.playState == AudioTrack.PLAYSTATE_PLAYING) {
@@ -325,6 +357,12 @@ object AudioTrackRouter {
                     }
                     idx = end
                     onProgress(idx.toFloat() / total.toFloat())
+
+                    // Refresh routed device labels occasionally
+                    chunkCount++
+                    if (chunkCount % 20 == 0) {
+                        onRoute(labelForDevice(t1.routedDevice), labelForDevice(monitor?.routedDevice))
+                    }
                 }
             } finally {
                 try { t1.stop() } catch (_: Throwable) {}
@@ -348,6 +386,26 @@ object AudioTrackRouter {
         primary = null
         monitor = null
     }
+
+    private fun labelForDevice(d: AudioDeviceInfo?): String {
+        if (d == null) return "—"
+        val type = when (d.type) {
+            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "Speaker"
+            AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> "Wired headphones"
+            AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Wired headset"
+            AudioDeviceInfo.TYPE_USB_DEVICE -> "USB device"
+            AudioDeviceInfo.TYPE_USB_HEADSET -> "USB headset"
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "Bluetooth A2DP"
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth SCO"
+            AudioDeviceInfo.TYPE_LINE_ANALOG -> "Line out"
+            AudioDeviceInfo.TYPE_AUX_LINE -> "Aux line"
+            AudioDeviceInfo.TYPE_HDMI -> "HDMI"
+            AudioDeviceInfo.TYPE_DOCK -> "Dock"
+            else -> "Other"
+        }
+        val name = try { d.productName?.toString() } catch (_: Throwable) { null }
+        return if (!name.isNullOrBlank()) "$type ($name)" else type
+    }
 }
 
 fun playPcmToUsbAndSpeaker(
@@ -356,9 +414,10 @@ fun playPcmToUsbAndSpeaker(
     pcm: ShortArray,
     mirrorToSpeaker: Boolean,
     monitorVolume: Float,
+    onRoute: (String, String) -> Unit = { _, _ -> },
     onProgress: (Float) -> Unit = {},
     onEnd: () -> Unit
-) = AudioTrackRouter.play(ctx, sampleRate, pcm, mirrorToSpeaker, monitorVolume, onProgress, onEnd)
+) = AudioTrackRouter.play(ctx, sampleRate, pcm, mirrorToSpeaker, monitorVolume, onRoute, onProgress, onEnd)
 
 /* ---------- Duration estimate & generator ---------- */
 
@@ -395,6 +454,7 @@ class CasSignalGenerator(
             EncodingMode.FSK_1500 -> generateFSK(bytes, 1500, leaderMs, tailMs, bitOrder, onProgress)
         }
 
+    // FM: toggle at start of bit; if bit==1 also toggle mid-bit
     private fun generateFM(
         bytes: ByteArray, baud: Int, leaderMs: Int, tailMs: Int,
         bitOrder: BitOrder, onProgress: (Float) -> Unit
@@ -446,6 +506,7 @@ class CasSignalGenerator(
         return if (idx == out.size) out else out.copyOf(idx)
     }
 
+    // High-speed: crude FSK using two square-ish tones
     private fun generateFSK(
         bytes: ByteArray, baud: Int, leaderMs: Int, tailMs: Int,
         bitOrder: BitOrder, onProgress: (Float) -> Unit
@@ -454,6 +515,9 @@ class CasSignalGenerator(
         val f1 = 2680.0
         val spb = (sampleRate.toDouble() / baud).toInt()
         val leaderSamples = (leaderMs / 1000.0 * sampleRate).toInt()
+        thetail@ run {
+            // no-op label; keeps structure tidy
+        }
         val tailSamples = (tailMs / 1000.0 * sampleRate).toInt()
         val totalBits = bytes.size.toLong() * 8L
         val est = leaderSamples + tailSamples + (totalBits * spb).toInt() + sampleRate
