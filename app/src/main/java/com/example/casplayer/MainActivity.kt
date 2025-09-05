@@ -8,6 +8,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -38,8 +39,9 @@ enum class BitOrder { MSB_FIRST, LSB_FIRST }
 
 @Composable
 fun PlayerScreen(cr: ContentResolver, ctx: Context) {
-    var fileUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var fileUri by remember { mutableStateOf<Uri?>(null) }
     var fileName by remember { mutableStateOf("(none)") }
+
     var mode by remember { mutableStateOf(EncodingMode.FM_500) }
     var bitOrder by remember { mutableStateOf(BitOrder.MSB_FIRST) }
     var sampleRate by remember { mutableStateOf(44100) }
@@ -48,8 +50,8 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
     var amplitude by remember { mutableStateOf(0.9f) }
     var invert by remember { mutableStateOf(false) }
 
-    var monitorSpeaker by remember { mutableStateOf(false) }
-    var monitorVol by remember { mutableStateOf(0.35f) } // 0..1 speaker monitor volume
+    var monitorSpeaker by remember { mutableStateOf(false) }   // mirror to speaker?
+    var monitorVol by remember { mutableStateOf(0.35f) }       // 0..1 speaker monitor volume
 
     var isPlaying by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("Ready") }
@@ -218,30 +220,28 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
 
                             withContext(Dispatchers.Main) { status = "Playing…" }
 
-                            // IMPORTANT: no trailing lambda; pass onEnd inside parentheses
-                       playPcmToUsbAndSpeaker(... ) { /* onEnd */ }
-
-                            ctx = ctx,
-                            sampleRate = sampleRate,
-                            pcm = pcm,
-                            mirrorToSpeaker = monitorSpeaker,
-                            monitorVolume = monitorVol,
-                            onRoute = { p, m ->
-                                scope.launch(Dispatchers.Main) {
-                                    primaryRoute = p
-                                    monitorRoute = m
+                            // IMPORTANT: no trailing lambda; all callbacks are named args
+                            playPcmToUsbAndSpeaker(
+                                ctx = ctx,
+                                sampleRate = sampleRate,
+                                pcm = pcm,
+                                mirrorToSpeaker = monitorSpeaker,
+                                monitorVolume = monitorVol,
+                                onRoute = { p, m ->
+                                    scope.launch(Dispatchers.Main) {
+                                        primaryRoute = p
+                                        monitorRoute = m
+                                    }
+                                },
+                                onProgress = { frac ->
+                                    elapsedMs = (frac * totalMs).toInt()
+                                },
+                                onEnd = {
+                                    isPlaying = false
+                                    elapsedMs = totalMs
+                                    status = "Done"
                                 }
-                            },
-                            onProgress = { frac ->
-                                elapsedMs = (frac * totalMs).toInt()
-                            },
-                            onEnd = {
-                                isPlaying = false
-                                elapsedMs = totalMs
-                                status = "Done"
-                            }
-                        )
-
+                            )
                         } catch (t: Throwable) {
                             withContext(Dispatchers.Main) {
                                 isPlaying = false
@@ -289,6 +289,9 @@ fun LabeledSliderMini(label: String, value: Float, min: Float, max: Float, onCha
 /* ---------- Dual-route audio with progress + monitor volume + route labels ---------- */
 
 object AudioTrackRouter {
+    private var primary: AudioTrack? = null
+    private var monitor: AudioTrack? = null
+
     fun play(
         context: Context,
         sampleRate: Int,
@@ -298,8 +301,8 @@ object AudioTrackRouter {
         onRoute: (String, String) -> Unit = { _, _ -> },
         onProgress: (Float) -> Unit = {},
         onEnd: () -> Unit
-    ) { /* ... */ }
-}
+    ) {
+        stop()
 
         val am = context.getSystemService(AudioManager::class.java)
         val outputs = am?.getDevices(AudioManager.GET_DEVICES_OUTPUTS).orEmpty()
@@ -423,8 +426,9 @@ fun playPcmToUsbAndSpeaker(
     onRoute: (String, String) -> Unit = { _, _ -> },
     onProgress: (Float) -> Unit = {},
     onEnd: () -> Unit
-) = AudioTrackRouter.play(ctx, sampleRate, pcm, mirrorToSpeaker, monitorVolume, onRoute, onProgress, onEnd)
-
+) = AudioTrackRouter.play(
+    ctx, sampleRate, pcm, mirrorToSpeaker, monitorVolume, onRoute, onProgress, onEnd
+)
 
 /* ---------- Duration estimate & generator ---------- */
 
