@@ -8,7 +8,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,7 +18,6 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # Android SDK + tools
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
@@ -28,28 +26,25 @@ jobs:
           yes | sdkmanager --licenses
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "cmdline-tools;latest"
 
-      # Point Gradle to the SDK explicitly
       - name: Write local.properties
         run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
 
-      # Install Gradle and cache it
-      - name: Set up Gradle
+      # ⬇️ Gradle with CACHING DISABLED (avoids the 400 cache errors)
+      - name: Set up Gradle (no cache)
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: "8.7"
+          cache-disabled: true
 
-      # Generate a wrapper for this CI job and use it
       - name: Generate Gradle wrapper
         run: gradle wrapper --gradle-version 8.7
 
       - name: Make wrapper executable
         run: chmod +x ./gradlew
 
-      # Build the debug APK
       - name: Build Debug APK
         run: ./gradlew --no-daemon --stacktrace assembleDebug
 
-      # Publish the APK as a downloadable artifact
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
