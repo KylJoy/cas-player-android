@@ -219,27 +219,28 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
                             withContext(Dispatchers.Main) { status = "Playing…" }
 
                             // IMPORTANT: no trailing lambda; pass onEnd inside parentheses
-                            playPcmToUsbAndSpeaker(
-                                ctx = ctx,
-                                sampleRate = sampleRate,
-                                pcm = pcm,
-                                mirrorToSpeaker = monitorSpeaker,
-                                monitorVolume = monitorVol,
-                                onRoute = { p, m ->
-                                    scope.launch(Dispatchers.Main) {
-                                        primaryRoute = p
-                                        monitorRoute = m
-                                    }
-                                },
-                                onProgress = { frac ->
-                                    elapsedMs = (frac * totalMs).toInt()
-                                },
-                                onEnd = {
-                                    isPlaying = false
-                                    elapsedMs = totalMs
-                                    status = "Done"
+                        playPcmToUsbAndSpeaker(
+                            ctx = ctx,
+                            sampleRate = sampleRate,
+                            pcm = pcm,
+                            mirrorToSpeaker = monitorSpeaker,
+                            monitorVolume = monitorVol,
+                            onRoute = { p, m ->
+                                scope.launch(Dispatchers.Main) {
+                                    primaryRoute = p
+                                    monitorRoute = m
                                 }
-                            )
+                            },
+                            onProgress = { frac ->
+                                elapsedMs = (frac * totalMs).toInt()
+                            },
+                            onEnd = {
+                                isPlaying = false
+                                elapsedMs = totalMs
+                                status = "Done"
+                            }
+                        )
+
                         } catch (t: Throwable) {
                             withContext(Dispatchers.Main) {
                                 isPlaying = false
