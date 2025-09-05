@@ -8,7 +8,6 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
-import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -39,7 +38,7 @@ enum class BitOrder { MSB_FIRST, LSB_FIRST }
 
 @Composable
 fun PlayerScreen(cr: ContentResolver, ctx: Context) {
-    var fileUri by remember { mutableStateOf<Uri?>(null) }
+    var fileUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var fileName by remember { mutableStateOf("(none)") }
     var mode by remember { mutableStateOf(EncodingMode.FM_500) }
     var bitOrder by remember { mutableStateOf(BitOrder.MSB_FIRST) }
@@ -219,6 +218,7 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
 
                             withContext(Dispatchers.Main) { status = "Playing…" }
 
+                            // IMPORTANT: no trailing lambda; pass onEnd inside parentheses
                             playPcmToUsbAndSpeaker(
                                 ctx = ctx,
                                 sampleRate = sampleRate,
@@ -231,12 +231,15 @@ fun PlayerScreen(cr: ContentResolver, ctx: Context) {
                                         monitorRoute = m
                                     }
                                 },
-                                onProgress = { frac -> elapsedMs = (frac * totalMs).toInt() }
-                            ) {
-                                isPlaying = false
-                                elapsedMs = totalMs
-                                status = "Done"
-                            }
+                                onProgress = { frac ->
+                                    elapsedMs = (frac * totalMs).toInt()
+                                },
+                                onEnd = {
+                                    isPlaying = false
+                                    elapsedMs = totalMs
+                                    status = "Done"
+                                }
+                            )
                         } catch (t: Throwable) {
                             withContext(Dispatchers.Main) {
                                 isPlaying = false
@@ -301,10 +304,14 @@ object AudioTrackRouter {
 
         val am = context.getSystemService(AudioManager::class.java)
         val outputs = am?.getDevices(AudioManager.GET_DEVICES_OUTPUTS).orEmpty()
-        val usb = outputs.firstOrNull { it.type == AudioDeviceInfo.TYPE_USB_HEADSET || it.type == AudioDeviceInfo.TYPE_USB_DEVICE }
+        val usb = outputs.firstOrNull {
+            it.type == AudioDeviceInfo.TYPE_USB_HEADSET || it.type == AudioDeviceInfo.TYPE_USB_DEVICE
+        }
         val spk = outputs.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
 
-        val minBuf = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        val minBuf = AudioTrack.getMinBufferSize(
+            sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
+        )
 
         fun newTrack(): AudioTrack =
             AudioTrack.Builder()
@@ -515,9 +522,6 @@ class CasSignalGenerator(
         val f1 = 2680.0
         val spb = (sampleRate.toDouble() / baud).toInt()
         val leaderSamples = (leaderMs / 1000.0 * sampleRate).toInt()
-        thetail@ run {
-            // no-op label; keeps structure tidy
-        }
         val tailSamples = (tailMs / 1000.0 * sampleRate).toInt()
         val totalBits = bytes.size.toLong() * 8L
         val est = leaderSamples + tailSamples + (totalBits * spb).toInt() + sampleRate
