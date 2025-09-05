@@ -1,0 +1,8 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Simple "tape" glyph -->
+    <path android:fillColor="#FFFFFF" android:pathData="M20,34h68v40H20z"/>
+    <path android:fillColor="#000000" android:pathData="M24,38h60v32H24z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M28,56h52v4H28z"/>
+</vector>
