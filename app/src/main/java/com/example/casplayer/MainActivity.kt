@@ -11,7 +11,10 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,17 +24,11 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.*
 import kotlin.math.min
 import kotlin.math.roundToInt
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.compose.rememberLauncherForActivityResult
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            MaterialTheme {
-                PlayerScreen(contentResolver)
-            }
-        }
+        setContent { MaterialTheme { PlayerScreen(contentResolver) } }
     }
 }
 
@@ -64,8 +61,15 @@ fun PlayerScreen(cr: ContentResolver) {
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("TRS‑80 .CAS Player", style = MaterialTheme.typography.headlineSmall)
+    val scroll = rememberScrollState()
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(scroll)      // <-- makes the screen scrollable
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("TRS-80 .CAS Player", style = MaterialTheme.typography.headlineSmall)
         Text("File: $fileName", maxLines = 2, overflow = TextOverflow.Ellipsis)
 
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -74,22 +78,28 @@ fun PlayerScreen(cr: ContentResolver) {
             ModeSelector(mode) { mode = it }
         }
 
-        Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
             Text("Bit order")
             SegmentedButtons(
-                options = listOf("MSB→LSB","LSB→MSB"),
-                selected = if (bitOrder==BitOrder.MSB_FIRST) 0 else 1,
-                onChange = { bitOrder = if (it==0) BitOrder.MSB_FIRST else BitOrder.LSB_FIRST }
-            )
+                options = listOf("MSB→LSB", "LSB→MSB"),
+                selected = if (bitOrder == BitOrder.MSB_FIRST) 0 else 1
+            ) { bitOrder = if (it == 0) BitOrder.MSB_FIRST else BitOrder.LSB_FIRST }
         }
 
-        Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
             Text("Sample rate: ${sampleRate} Hz")
             SegmentedButtons(
-                options = listOf("44100","48000","96000"),
-                selected = when(sampleRate){44100->0;48000->1;96000->2;else->0},
-                onChange = { sampleRate = listOf(44100,48000,96000)[it] }
-            )
+                options = listOf("44100", "48000", "96000"),
+                selected = when (sampleRate) { 44100 -> 0; 48000 -> 1; 96000 -> 2; else -> 0 }
+            ) { sampleRate = listOf(44100, 48000, 96000)[it] }
         }
 
         LabeledSlider("Leader (ms)", leaderMs.toFloat(), 0f, 4000f) { leaderMs = it.roundToInt() }
@@ -120,9 +130,8 @@ fun PlayerScreen(cr: ContentResolver) {
                                 mode = mode,
                                 leaderMs = leaderMs,
                                 tailMs = tailMs,
-                                bitOrder = bitOrder,
-                                onProgress = { p -> progress = p }
-                            )
+                                bitOrder = bitOrder
+                            ) { p -> progress = p }
                             withContext(Dispatchers.Main) { status = "Playing audio..." }
                             playPcmMono16(sampleRate, pcm) {
                                 isPlaying = false
@@ -136,7 +145,8 @@ fun PlayerScreen(cr: ContentResolver) {
                             }
                         }
                     }
-                }) { Text("Play") }
+                }
+            ) { Text("Play") }
 
             Button(onClick = {
                 AudioTrackSingleton.stop()
@@ -154,66 +164,56 @@ fun PlayerScreen(cr: ContentResolver) {
 }
 
 @Composable
-fun SegmentedButtons(options: List<String>, selected: Int, onChange: (Int)->Unit) {
+fun SegmentedButtons(options: List<String>, selected: Int, onChange: (Int) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         options.forEachIndexed { idx, label ->
-            FilterChip(
-                selected = selected == idx,
-                onClick = { onChange(idx) },
-                label = { Text(label) }
+            FilterChip(selected = selected == idx, onClick = { onChange(idx) }, label = { Text(label) })
+        }
+    }
+}
+
+@Composable
+fun ModeSelector(selected: EncodingMode, onChange: (EncodingMode) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Speed:")
+        SegmentedButtons(
+            options = listOf("250 FM", "500 FM", "1500 FSK"),
+            selected = when (selected) { EncodingMode.FM_250 -> 0; EncodingMode.FM_500 -> 1; EncodingMode.FSK_1500 -> 2 }
+        ) { sel ->
+            onChange(
+                when (sel) {
+                    0 -> EncodingMode.FM_250
+                    1 -> EncodingMode.FM_500
+                    else -> EncodingMode.FSK_1500
+                }
             )
         }
     }
 }
 
 @Composable
-fun ModeSelector(selected: EncodingMode, onChange: (EncodingMode)->Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Speed:")
-        SegmentedButtons(
-            options = listOf("250 FM","500 FM","1500 FSK"),
-            selected = when(selected){
-                EncodingMode.FM_250 -> 0
-                EncodingMode.FM_500 -> 1
-                EncodingMode.FSK_1500 -> 2
-            },
-            onChange = { sel ->
-                onChange( when(sel){
-                    0 -> EncodingMode.FM_250
-                    1 -> EncodingMode.FM_500
-                    else -> EncodingMode.FSK_1500
-                })
-            }
-        )
-    }
-}
-
-@Composable
-fun LabeledSlider(label: String, value: Float, min: Float, max: Float, onChange: (Float)->Unit) {
+fun LabeledSlider(label: String, value: Float, min: Float, max: Float, onChange: (Float) -> Unit) {
     Column {
         Text("$label: ${"%.0f".format(value)}")
-        Slider(value = value, onValueChange = onChange, valueRange = min..max )
+        Slider(value = value, onValueChange = onChange, valueRange = min..max)
     }
 }
 
 object AudioTrackSingleton {
     private var track: AudioTrack? = null
 
-    fun play(sampleRate: Int, pcm: ShortArray, onEnd: ()->Unit) {
+    fun play(sampleRate: Int, pcm: ShortArray, onEnd: () -> Unit) {
         stop()
-        val minBuf = AudioTrack.getMinBufferSize(sampleRate,
-            AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        val minBuf = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val t = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setLegacyStreamType(AudioManager.STREAM_MUSIC)
-                    .build())
+            .setAudioAttributes(AudioAttributes.Builder().setLegacyStreamType(AudioManager.STREAM_MUSIC).build())
             .setAudioFormat(
                 AudioFormat.Builder()
                     .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                     .setSampleRate(sampleRate)
                     .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build())
+                    .build()
+            )
             .setTransferMode(AudioTrack.MODE_STREAM)
             .setBufferSizeInBytes(minBuf * 4)
             .build()
@@ -244,17 +244,16 @@ object AudioTrackSingleton {
     }
 }
 
-fun playPcmMono16(sampleRate: Int, pcm: ShortArray, onEnd: ()->Unit) {
+fun playPcmMono16(sampleRate: Int, pcm: ShortArray, onEnd: () -> Unit) =
     AudioTrackSingleton.play(sampleRate, pcm, onEnd)
-}
 
 class CasSignalGenerator(
     val sampleRate: Int,
     val amplitude: Float = 0.9f,
     val invert: Boolean = false
 ) {
-    private val amp = (amplitude.coerceIn(0.05f,1.0f) * 32767f).toInt()
-    private fun signed(level:Boolean) = if ( level.xor(invert) ) amp else -amp
+    private val amp = (amplitude.coerceIn(0.05f, 1.0f) * 32767f).toInt()
+    private fun signed(level: Boolean) = if (level.xor(invert)) amp else -amp
 
     fun generate(
         bytes: ByteArray,
@@ -262,19 +261,18 @@ class CasSignalGenerator(
         leaderMs: Int,
         tailMs: Int,
         bitOrder: BitOrder,
-        onProgress: (Float)->Unit
-    ): ShortArray {
-        return when(mode) {
+        onProgress: (Float) -> Unit
+    ): ShortArray =
+        when (mode) {
             EncodingMode.FM_250 -> generateFM(bytes, 250, leaderMs, tailMs, bitOrder, onProgress)
             EncodingMode.FM_500 -> generateFM(bytes, 500, leaderMs, tailMs, bitOrder, onProgress)
             EncodingMode.FSK_1500 -> generateFSK(bytes, 1500, leaderMs, tailMs, bitOrder, onProgress)
         }
-    }
 
     // FM: toggle at start of bit; if bit==1 also toggle mid-bit
     private fun generateFM(
         bytes: ByteArray, baud: Int, leaderMs: Int, tailMs: Int,
-        bitOrder: BitOrder, onProgress: (Float)->Unit
+        bitOrder: BitOrder, onProgress: (Float) -> Unit
     ): ShortArray {
         val bitSamples = sampleRate.toDouble() / baud.toDouble()
         val halfBit = bitSamples / 2.0
@@ -286,7 +284,6 @@ class CasSignalGenerator(
         var idx = 0
         var level = false
 
-        // leader as zeros (regular toggles)
         var acc = 0.0
         while (idx < leaderSamples) {
             out[idx++] = signed(level).toShort()
@@ -299,10 +296,10 @@ class CasSignalGenerator(
         var doneBits = 0L
         for (byte in bytes) {
             val b = byte.toInt() and 0xFF
-            val order = if (bitOrder==BitOrder.MSB_FIRST) bitIdxMSB else bitIdxLSB
+            val order = if (bitOrder == BitOrder.MSB_FIRST) bitIdxMSB else bitIdxLSB
             for (bi in order) {
                 val bit = (b shr bi) and 1
-                level = !level // start-of-bit
+                level = !level
                 var s = 0.0
                 var mid = false
                 var remain = bitSamples
@@ -310,11 +307,11 @@ class CasSignalGenerator(
                     if (idx >= out.size) break
                     out[idx++] = signed(level).toShort()
                     s += 1.0; remain -= 1.0
-                    if (!mid && bit==1 && s >= halfBit) { level = !level; mid = true }
+                    if (!mid && bit == 1 && s >= halfBit) { level = !level; mid = true }
                 }
                 doneBits++
             }
-            if (doneBits % 512L == 0L) onProgress(min(0.95f, doneBits.toFloat()/totalBits.toFloat()))
+            if (doneBits % 512L == 0L) onProgress(min(0.95f, doneBits.toFloat() / totalBits.toFloat()))
         }
 
         for (i in 0 until tailSamples) {
@@ -328,9 +325,10 @@ class CasSignalGenerator(
     // High-speed: crude FSK using two square-ish tones
     private fun generateFSK(
         bytes: ByteArray, baud: Int, leaderMs: Int, tailMs: Int,
-        bitOrder: BitOrder, onProgress: (Float)->Unit
+        bitOrder: BitOrder, onProgress: (Float) -> Unit
     ): ShortArray {
-        val f0 = 1320.0; val f1 = 2680.0
+        val f0 = 1320.0
+        val f1 = 2680.0
         val spb = (sampleRate.toDouble() / baud).toInt()
         val leaderSamples = (leaderMs / 1000.0 * sampleRate).toInt()
         val tailSamples = (tailMs / 1000.0 * sampleRate).toInt()
@@ -343,9 +341,10 @@ class CasSignalGenerator(
             val period = sampleRate.toDouble() / freq
             var acc = 0.0
             var level = false
+            val sign = if (invert) -1 else 1
             for (i in 0 until samples) {
-                if (acc >= period/2.0) { level = !level; acc -= period/2.0 }
-                out[idx++] = (if (invert) -1 else 1 * (if (level) amp else -amp)).toShort()
+                if (acc >= period / 2.0) { level = !level; acc -= period / 2.0 }
+                out[idx++] = (sign * (if (level) amp else -amp)).toShort()
                 if (idx >= out.size) return
                 acc += 1.0
             }
@@ -357,13 +356,13 @@ class CasSignalGenerator(
         var doneBits = 0L
         for (byte in bytes) {
             val b = byte.toInt() and 0xFF
-            val order = if (bitOrder==BitOrder.MSB_FIRST) bitIdxMSB else bitIdxLSB
+            val order = if (bitOrder == BitOrder.MSB_FIRST) bitIdxMSB else bitIdxLSB
             for (bi in order) {
                 val bit = (b shr bi) and 1
-                writeSquare(if (bit==0) f0 else f1, spb)
+                writeSquare(if (bit == 0) f0 else f1, spb)
                 doneBits++
             }
-            if (doneBits % 512L == 0L) onProgress(min(0.95f, doneBits.toFloat()/totalBits.toFloat()))
+            if (doneBits % 512L == 0L) onProgress(min(0.95f, doneBits.toFloat() / totalBits.toFloat()))
         }
         writeSquare(f0, tailSamples)
         onProgress(1f)
