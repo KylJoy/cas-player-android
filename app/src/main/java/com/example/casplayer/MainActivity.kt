@@ -1,8 +1,10 @@
 package com.example.casplayer
 
 import android.content.ContentResolver
+import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
@@ -28,7 +30,7 @@ import kotlin.math.roundToInt
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme { PlayerScreen(contentResolver) } }
+        setContent { MaterialTheme { PlayerScreen(contentResolver, this) } }
     }
 }
 
@@ -36,7 +38,7 @@ enum class EncodingMode { FM_250, FM_500, FSK_1500 }
 enum class BitOrder { MSB_FIRST, LSB_FIRST }
 
 @Composable
-fun PlayerScreen(cr: ContentResolver) {
+fun PlayerScreen(cr: ContentResolver, ctx: Context) {
     var fileUri by remember { mutableStateOf<Uri?>(null) }
     var fileName by remember { mutableStateOf("(none)") }
     var mode by remember { mutableStateOf(EncodingMode.FM_500) }
@@ -46,6 +48,7 @@ fun PlayerScreen(cr: ContentResolver) {
     var tailMs by remember { mutableStateOf(300) }
     var amplitude by remember { mutableStateOf(0.9f) }
     var invert by remember { mutableStateOf(false) }
+    var monitorSpeaker by remember { mutableStateOf(false) }   // NEW: mirror to speaker
     var isPlaying by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf(0f) }
     var status by remember { mutableStateOf("Ready") }
@@ -65,7 +68,7 @@ fun PlayerScreen(cr: ContentResolver) {
     Column(
         Modifier
             .fillMaxSize()
-            .verticalScroll(scroll)      // <-- makes the screen scrollable
+            .verticalScroll(scroll)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -108,7 +111,12 @@ fun PlayerScreen(cr: ContentResolver) {
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = invert, onCheckedChange = { invert = it })
-            Text("Invert polarity (rarely needed)")
+            Text("Invert polarity")
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = monitorSpeaker, onCheckedChange = { monitorSpeaker = it })
+            Text("Monitor on speaker (mirror output)")
         }
 
         LinearProgressIndicator(progress, Modifier.fillMaxWidth())
@@ -133,7 +141,7 @@ fun PlayerScreen(cr: ContentResolver) {
                                 bitOrder = bitOrder
                             ) { p -> progress = p }
                             withContext(Dispatchers.Main) { status = "Playing audio..." }
-                            playPcmMono16(sampleRate, pcm) {
+                            playPcmToUsbAndSpeaker(ctx, sampleRate, pcm, monitorSpeaker) {
                                 isPlaying = false
                                 progress = 0f
                                 status = "Done"
@@ -149,7 +157,7 @@ fun PlayerScreen(cr: ContentResolver) {
             ) { Text("Play") }
 
             Button(onClick = {
-                AudioTrackSingleton.stop()
+                AudioTrackRouter.stop()
                 isPlaying = false
                 progress = 0f
                 status = "Stopped"
@@ -157,7 +165,7 @@ fun PlayerScreen(cr: ContentResolver) {
         }
 
         Text(
-            "Tips: Disable EQ/Dolby, set phone volume ~75–85%, airplane mode ON. If loads fail, try the other bit order or speed.",
+            "Tips: Disable EQ/Dolby, set phone volume ~75–85%. If loads fail, try the other bit order or speed.",
             style = MaterialTheme.typography.bodySmall
         )
     }
@@ -199,53 +207,100 @@ fun LabeledSlider(label: String, value: Float, min: Float, max: Float, onChange:
     }
 }
 
-object AudioTrackSingleton {
-    private var track: AudioTrack? = null
+/* ---------- Dual-route audio: USB + Speaker ---------- */
 
-    fun play(sampleRate: Int, pcm: ShortArray, onEnd: () -> Unit) {
+object AudioTrackRouter {
+    private var primary: AudioTrack? = null
+    private var monitor: AudioTrack? = null
+
+    fun play(context: Context, sampleRate: Int, pcm: ShortArray, mirrorToSpeaker: Boolean, onEnd: () -> Unit) {
         stop()
+
+        val am = context.getSystemService(AudioManager::class.java)
+        val outputs = am?.getDevices(AudioManager.GET_DEVICES_OUTPUTS).orEmpty()
+        val usb = outputs.firstOrNull { it.type == AudioDeviceInfo.TYPE_USB_HEADSET || it.type == AudioDeviceInfo.TYPE_USB_DEVICE }
+        val spk = outputs.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+
         val minBuf = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        val t = AudioTrack.Builder()
-            .setAudioAttributes(AudioAttributes.Builder().setLegacyStreamType(AudioManager.STREAM_MUSIC).build())
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(sampleRate)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build()
-            )
-            .setTransferMode(AudioTrack.MODE_STREAM)
-            .setBufferSizeInBytes(minBuf * 4)
-            .build()
-        track = t
-        t.play()
-        var idx = 0
-        val chunk = 2048
+
+        fun newTrack(): AudioTrack =
+            AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .setBufferSizeInBytes(minBuf * 4)
+                .build()
+
+        val t1 = newTrack()
+        if (usb != null) try { t1.setPreferredDevice(usb) } catch (_: Throwable) {}
+        t1.play()
+        primary = t1
+
+        if (mirrorToSpeaker && spk != null) {
+            val t2 = newTrack()
+            try { t2.setPreferredDevice(spk) } catch (_: Throwable) {}
+            // keep monitor at a gentler level
+            try { t2.setVolume(0.35f) } catch (_: Throwable) {}
+            t2.play()
+            monitor = t2
+        }
+
+        // Write to both in the same loop
         Thread {
-            while (idx < pcm.size && t.playState == AudioTrack.PLAYSTATE_PLAYING) {
-                val end = min(idx + chunk, pcm.size)
-                val len = end - idx
-                t.write(pcm, idx, len, AudioTrack.WRITE_BLOCKING)
-                idx = end
+            var idx = 0
+            val chunk = 2048
+            val t2 = monitor
+            val t1Local = t1
+            try {
+                while (idx < pcm.size && t1Local.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                    val end = min(idx + chunk, pcm.size)
+                    val len = end - idx
+                    t1Local.write(pcm, idx, len, AudioTrack.WRITE_BLOCKING)
+                    if (t2 != null && t2.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                        t2.write(pcm, idx, len, AudioTrack.WRITE_BLOCKING)
+                    }
+                    idx = end
+                }
+            } finally {
+                try { t1Local.stop() } catch (_: Throwable) {}
+                try { t1Local.release() } catch (_: Throwable) {}
+                primary = null
+                if (t2 != null) {
+                    try { t2.stop() } catch (_: Throwable) {}
+                    try { t2.release() } catch (_: Throwable) {}
+                    monitor = null
+                }
+                onEnd()
             }
-            try { t.stop() } catch (_: Throwable) {}
-            try { t.release() } catch (_: Throwable) {}
-            track = null
-            onEnd()
         }.start()
     }
 
     fun stop() {
-        track?.let {
-            try { it.pause(); it.flush(); it.stop() } catch (_: Throwable) {}
-            try { it.release() } catch (_: Throwable) {}
+        listOfNotNull(primary, monitor).forEach { t ->
+            try { t.pause(); t.flush(); t.stop() } catch (_: Throwable) {}
+            try { t.release() } catch (_: Throwable) {}
         }
-        track = null
+        primary = null
+        monitor = null
     }
 }
 
-fun playPcmMono16(sampleRate: Int, pcm: ShortArray, onEnd: () -> Unit) =
-    AudioTrackSingleton.play(sampleRate, pcm, onEnd)
+// Helper wrapper
+fun playPcmToUsbAndSpeaker(ctx: Context, sampleRate: Int, pcm: ShortArray, mirrorToSpeaker: Boolean, onEnd: () -> Unit) =
+    AudioTrackRouter.play(ctx, sampleRate, pcm, mirrorToSpeaker, onEnd)
+
+/* ---------- Signal generator (unchanged except for minor cleanup) ---------- */
 
 class CasSignalGenerator(
     val sampleRate: Int,
@@ -269,7 +324,6 @@ class CasSignalGenerator(
             EncodingMode.FSK_1500 -> generateFSK(bytes, 1500, leaderMs, tailMs, bitOrder, onProgress)
         }
 
-    // FM: toggle at start of bit; if bit==1 also toggle mid-bit
     private fun generateFM(
         bytes: ByteArray, baud: Int, leaderMs: Int, tailMs: Int,
         bitOrder: BitOrder, onProgress: (Float) -> Unit
@@ -314,15 +368,13 @@ class CasSignalGenerator(
             if (doneBits % 512L == 0L) onProgress(min(0.95f, doneBits.toFloat() / totalBits.toFloat()))
         }
 
-        for (i in 0 until tailSamples) {
-            if (idx >= out.size) break
-            out[idx++] = signed(level).toShort()
+        repeat(tailSamples) {
+            if (idx < out.size) out[idx++] = signed(level).toShort()
         }
         onProgress(1f)
         return if (idx == out.size) out else out.copyOf(idx)
     }
 
-    // High-speed: crude FSK using two square-ish tones
     private fun generateFSK(
         bytes: ByteArray, baud: Int, leaderMs: Int, tailMs: Int,
         bitOrder: BitOrder, onProgress: (Float) -> Unit
